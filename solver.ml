@@ -35,6 +35,6 @@ let infer = function
     | Equal(v1, v2, _) -> Equal(v1, v2, true)
     | NotEqual(v1, v2, _)-> NotEqual(v1, v2, true)
 
-let rec decide f m = match f with
+(*let rec decide f m = match f with
     | [] -> m
-    | c::cs ->
+    | c::cs ->*)

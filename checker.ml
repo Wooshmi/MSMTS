@@ -10,7 +10,9 @@ let check (nbvars, nbclauses, expr) =
             List.iter (
                 fun literal -> 
                     match literal with
-                    | Equal (x, y) | Notequal (x, y) -> if x = 0 || x > nbvars || y = 0 || y > nbvars then raise (Error "Variable number is illegal."))
+                    | Equal (x, y, _) | NotEqual (x, y, _) -> 
+                        if x = 0 || x > nbvars || y = 0 || y > nbvars then 
+                            raise (Error "Variable number is illegal."))
                 clause)
         expr
 
