@@ -1,6 +1,6 @@
-type literal = 
-    | Equal of int * int
-    | Notequal of int * int
+type literal =
+    | Equal of int * int * bool
+    | NotEqual of int * int * bool 
 
 type clause = literal list
 
