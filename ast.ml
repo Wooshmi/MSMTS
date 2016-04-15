@@ -1,6 +1,7 @@
-type literal =
-    | Equal of int * int * bool
-    | NotEqual of int * int * bool 
+type literal = {
+    vars : int * int;
+    equal : bool;
+    inferred : bool }
 
 type clause = literal list
 

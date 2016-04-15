@@ -17,7 +17,7 @@ clause:
 | l = literal* Newline                                          { l }
 
 literal:
-| x = Variable Tequal y = Variable                              { Equal (x, y, false) }
-| x = Variable Tnotequal y = Variable                           { NotEqual (x, y, false) }
+| x = Variable Tequal y = Variable                              { { vars = (x, y); equal = true; inferred = false} }
+| x = Variable Tnotequal y = Variable                           { { vars = (x, y); equal = false; inferred = false} }
 
 
