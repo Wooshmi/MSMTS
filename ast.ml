@@ -1,7 +1,6 @@
 type literal = {
     vars : int * int;
-    equal : bool;
-    inferred : bool }
+    equal : bool }
 
 type clause = literal list
 

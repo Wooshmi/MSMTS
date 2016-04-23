@@ -1,4 +1,4 @@
-CMO=lexer.cmo parser.cmo checker.cmo unionfind.cmo solver.cmo main.cmo 
+CMO=lexer.cmo parser.cmo checker.cmo unionfind.cmo sat_solver.cmo main.cmo 
 GENERATED=lexer.ml parser.ml parser.mli 
 BIN=msmts
 FLAGS=-annot -g
