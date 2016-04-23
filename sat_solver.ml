@@ -33,7 +33,7 @@ let lit_compare l1 l2 =
     | c -> c
 
 (* VSIDS heuristic *)
-let score = Hashtbl.create 500
+let score = Hashtbl.create 1000
 
 let heuristic_incr key =
     try
@@ -49,6 +49,18 @@ let heuristic_get_value key =
         Hashtbl.find score key
     with
     | Not_found -> 0
+
+let iter = ref 0
+let period = 500
+let ct = 16
+
+let next_iteration () =
+    incr iter;
+    if !iter > 500 then (
+        let l = Hashtbl.fold (fun key value l -> (key, value) :: l) score [] in
+        List.iter (fun (key, value) -> Hashtbl.replace score key (value / ct)) l;
+        iter := 1
+    )
 
 (* Techniques *)
 let neg l = 
@@ -145,24 +157,21 @@ let rec resolve f m r =
     match r with
     | [] -> raise Not_possible
     | l :: ls -> 
-        let aux = List.filter (fun l' -> l'.lit.vars = l.vars) m in
+        let aux = List.filter (fun l' -> l'.lit = neg l) m in
         let rec find a = (
             match a with
             | x :: a' -> (
                 match x.inferred with
                 | None -> find a'
                 | Some cl -> 
-                    if List.exists (fun lit -> lit.vars = l.vars) cl then (
-                        heuristic_incr x.lit.vars;
-                        List.filter (fun lit -> lit.vars <> l.vars) cl
-                    ) else 
-                        find a'
+                    heuristic_incr x.lit.vars;
+                    List.filter (fun lit -> lit.vars <> l.vars) cl
             )
             | [] -> raise Not_found 
         ) in
         try
             let d = find aux in
-            d @ ls
+            ls @ d
         with
         | Not_found -> l :: (resolve f m ls)
 
@@ -213,9 +222,11 @@ let restart f m = []
 (* Solve *)
 let rec resolution f m r =
     try
+        (* Debugging *)
         (*print_endline "Resolution";
         print_m m;
         print_r r; *)
+        next_iteration ();
         if fail f m r then
             raise UNSAT;
         try
@@ -224,14 +235,16 @@ let rec resolution f m r =
         with Not_possible ->
         try
             resolution f m (List.sort_uniq lit_compare (resolve f m r))
-        with Not_possible -> raise UNSAT 
+        with Not_possible -> raise UNSAT (* ? *)
     with
     | UNSAT -> false
 
 and search f m =
     try
+        (* Debugging *)
         (* print_endline "Search";
         print_m m; *)
+        next_iteration ();
         if success f m then
             raise SAT;
         try
@@ -242,12 +255,11 @@ and search f m =
         with Not_possible ->
         try
             resolution f m (conflict f m)
-        with Not_possible ->
+        with Not_possible -> 
         try
             search (forget f m) m
         with Not_possible -> search f (restart f m)
     with
     | SAT -> true
-
 
 let solve f = search (List.map (fun x -> (x, false)) f) []
