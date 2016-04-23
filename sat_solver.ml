@@ -35,20 +35,17 @@ let lit_compare l1 l2 =
 (* VSIDS heuristic *)
 let score = Hashtbl.create 1000
 
+let heuristic_init f =
+    List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f
+
 let heuristic_incr key =
-    try
-        Hashtbl.replace score key (Hashtbl.find score key + 1)
-    with
-    | Not_found -> Hashtbl.replace score key 1
+    Hashtbl.replace score key (Hashtbl.find score key + 1)
 
 let heuristic_incr_list l =
     List.iter heuristic_incr l
 
 let heuristic_get_value key =
-    try 
-        Hashtbl.find score key
-    with
-    | Not_found -> 0
+    Hashtbl.find score key
 
 let iter = ref 0
 let period = 500
@@ -108,35 +105,15 @@ let rec unit f m =
         with 
         | Not_found -> unit cs m
 
-let rec decide f m = 
-    let rec heuristic_opt c = (
-        match c with
-        | [] -> assert false
-        | [l] -> l
-        | l :: ls ->
-            let aux = heuristic_opt ls in
-            if heuristic_get_value l.vars > heuristic_get_value aux.vars then
-                l
-            else
-                aux
-    ) in
-    match f with
-    | [] -> raise Not_possible
-    | (c, _) :: cs -> (
-        let l = List.filter (fun l -> not (is_defined l m)) c in
-        match l with
-        | [] -> decide cs m
-        | _ -> 
-            let l = heuristic_opt l in
-            try
-                let aux = decide cs m in
-                if heuristic_get_value (List.hd aux).lit.vars > heuristic_get_value l.vars then
-                    aux
-                else
-                    (infer { l with equal = true } None) :: m
-            with
-            | Not_possible -> (infer { l with equal = true } None) :: m
-    )
+let rec decide f m =
+    let ans = Hashtbl.fold 
+        (fun key value ans -> 
+            match ans with
+            | None -> if not (is_defined { vars = key; equal = true } m) then Some (key, value) else None
+            | Some (kans, vans) -> if not (is_defined { vars = key; equal = true } m) && value > vans then Some (key, value) else Some (kans, vans)) score None in
+    match ans with
+    | None -> raise Not_possible
+    | Some (vars, _) -> (infer { vars = vars; equal = true } None) :: m
 
 let rec conflict f m =
     match f with
@@ -262,4 +239,4 @@ and search f m =
     with
     | SAT -> true
 
-let solve f = search (List.map (fun x -> (x, false)) f) []
+let solve f = heuristic_init f; search (List.map (fun x -> (x, false)) f) []
