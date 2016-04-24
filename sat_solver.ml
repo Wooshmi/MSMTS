@@ -8,6 +8,7 @@ type iliteral = {
 exception SAT
 exception UNSAT
 exception Not_possible
+exception Unexpected_behaviour
 
 (* Printing function *)
 let print_literal l =
@@ -126,7 +127,7 @@ let rec unit undef f m =
 let rec decide undef f m =
     try
         let (s, vars) = LSet.max_elt undef in
-        LSet.remove (s, vars) undef, (infer { vars = vars; equal = true } None) :: m;
+        LSet.remove (s, vars) undef, (infer { vars = vars; equal = Random.bool () } None) :: m;
     with
     | Not_found -> raise Not_possible
 
@@ -216,6 +217,8 @@ let restart undef f m =
     Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty, []
 
 (* Solve *)
+let rval = ref 10000
+
 let rec resolution undef f m r =
     try
         (* Debugging *)
@@ -232,7 +235,7 @@ let rec resolution undef f m r =
         try
             let undef', r' = resolve undef f m r in
             resolution undef' f m (List.sort_uniq lit_compare r')
-        with Not_possible -> raise UNSAT (* ? *)
+        with Not_possible -> raise Unexpected_behaviour
     with
     | UNSAT -> false
 
@@ -244,25 +247,31 @@ and search undef f m =
         let undef = next_iteration undef in 
         if success undef f m then
             raise SAT;
-        try
-            let undef', m' = unit undef f m in
+        if Random.int (!rval) = 42 then (
+            let undef', m' = restart undef f m in 
+            rval := !rval + !rval / 2;
             search undef' f m'
-        with Not_possible ->
-        try
-            let undef', m' = decide undef f m in
-            search undef' f m'
-        with Not_possible ->
-        try
-            let undef', r = conflict undef f m in 
-            resolution undef' f m r
-        with Not_possible -> 
-        try
-            let undef', f' = forget undef f m in
-            search undef' f' m
-        with Not_possible -> 
-            let undef', m' = restart undef f m in
-            search undef' f m'
+        ) else (
+            try
+                let undef', m' = unit undef f m in
+                search undef' f m'
+            with Not_possible ->
+            try
+                let undef', m' = decide undef f m in
+                search undef' f m'
+            with Not_possible ->
+            try
+                let undef', r = conflict undef f m in 
+                resolution undef' f m r
+            with Not_possible -> 
+            try
+                let undef', f' = forget undef f m in
+                search undef' f' m
+            with Not_possible -> raise Unexpected_behaviour
+        )
     with
     | SAT -> true
 
-let solve f =  search (heuristic_init f) (List.map (fun x -> (x, false)) f) []
+let solve f =  
+    Random.self_init ();
+    search (heuristic_init f) (List.map (fun x -> (x, false)) f) []
