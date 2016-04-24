@@ -33,13 +33,26 @@ let lit_compare l1 l2 =
     | c -> c
 
 (* VSIDS heuristic *)
+module Literal = 
+    struct
+        type t = int * (int * int)
+        let compare = Pervasives.compare
+    end
+
+module LSet = Set.Make(Literal)
+
 let score = Hashtbl.create 1000
+let undef = ref LSet.empty
 
 let heuristic_init f =
-    List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f
+    List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f;
+    undef := Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty
 
 let heuristic_incr key =
-    Hashtbl.replace score key (Hashtbl.find score key + 1)
+    let v = Hashtbl.find score key in
+    Hashtbl.replace score key (v + 1);
+    if LSet.mem (v, key) (!undef) then
+        undef := LSet.add (v + 1, key) (LSet.remove (v, key) (!undef))
 
 let heuristic_incr_list l =
     List.iter heuristic_incr l
@@ -48,14 +61,15 @@ let heuristic_get_value key =
     Hashtbl.find score key
 
 let iter = ref 0
-let period = 500
+let period = 10000
 let ct = 16
 
 let next_iteration () =
     incr iter;
-    if !iter > 500 then (
+    if !iter > period then (
         let l = Hashtbl.fold (fun key value l -> (key, value) :: l) score [] in
         List.iter (fun (key, value) -> Hashtbl.replace score key (value / ct)) l;
+        undef := LSet.fold (fun (value, key) set -> LSet.add (Hashtbl.find score key, key) set) (!undef) LSet.empty;
         iter := 1
     )
 
@@ -101,19 +115,19 @@ let rec unit f m =
                 fun l' ->
                     let c' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l') c) in
                     not (is_defined l' m) && (formula_satisfied_by c' m)
-            ) c in (infer l (Some c)) :: m
+            ) c in 
+            undef := LSet.remove (Hashtbl.find score l.vars, l.vars) (!undef);
+            (infer l (Some c)) :: m
         with 
         | Not_found -> unit cs m
 
 let rec decide f m =
-    let ans = Hashtbl.fold 
-        (fun key value ans -> 
-            match ans with
-            | None -> if not (is_defined { vars = key; equal = true } m) then Some (key, value) else None
-            | Some (kans, vans) -> if not (is_defined { vars = key; equal = true } m) && value > vans then Some (key, value) else Some (kans, vans)) score None in
-    match ans with
-    | None -> raise Not_possible
-    | Some (vars, _) -> (infer { vars = vars; equal = true } None) :: m
+    try
+        let (s, vars) = LSet.max_elt (!undef) in
+        undef := LSet.remove (s, vars) (!undef);
+        (infer { vars = vars; equal = true } None) :: m;
+    with
+    | Not_found -> raise Not_possible
 
 let rec conflict f m =
     match f with
@@ -153,22 +167,25 @@ let rec resolve f m r =
         | Not_found -> l :: (resolve f m ls)
 
 let backjump f m r = 
-    let rec find_m2 l r' m = (
+    let rec find_m2 l r' m m1 = (
         match m with
         | [] -> raise Not_found
         | il :: ils ->
             if (il.inferred = None) && not (is_defined l ils) && formula_satisfied_by r' ils then
-                ils
+                il :: m1, ils
             else
-                find_m2 l r' ils
+                find_m2 l r' ils (il :: m1)
     ) in
     let rec backjump_literal_processing rc = (
         match rc with
         | [] -> raise Not_found
         | l :: ls -> 
             let r' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l) r) in
-            try 
-                (infer l (Some r)) :: (find_m2 l r' m)
+            try
+                let m1, m2 = find_m2 l r' m [] in
+                undef := List.fold_right (fun x set -> LSet.add (Hashtbl.find score x.lit.vars, x.lit.vars) set) m1 (!undef);
+                undef := LSet.remove (Hashtbl.find score l.vars, l.vars) (!undef);
+                (infer l (Some r)) :: m2
             with
             | Not_found -> backjump_literal_processing ls
     ) in
@@ -194,7 +211,9 @@ let rec forget f m =
         else
             c :: (forget cs m)
 
-let restart f m = []
+let restart f m = 
+    undef := Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty;
+    []
 
 (* Solve *)
 let rec resolution f m r =
