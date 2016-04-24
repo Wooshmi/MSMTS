@@ -42,20 +42,21 @@ module Literal =
 module LSet = Set.Make(Literal)
 
 let score = Hashtbl.create 1000
-let undef = ref LSet.empty
 
 let heuristic_init f =
     List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f;
-    undef := Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty
+    Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty
 
-let heuristic_incr key =
+let heuristic_incr undef key =
     let v = Hashtbl.find score key in
     Hashtbl.replace score key (v + 1);
-    if LSet.mem (v, key) (!undef) then
-        undef := LSet.add (v + 1, key) (LSet.remove (v, key) (!undef))
+    if LSet.mem (v, key) undef then
+        LSet.add (v + 1, key) (LSet.remove (v, key) undef)
+    else
+        undef
 
-let heuristic_incr_list l =
-    List.iter heuristic_incr l
+let heuristic_incr_list undef l =
+    List.fold_left (fun undef key -> heuristic_incr undef key) undef l
 
 let heuristic_get_value key =
     Hashtbl.find score key
@@ -64,14 +65,16 @@ let iter = ref 0
 let period = 10000
 let ct = 16
 
-let next_iteration () =
+let next_iteration undef =
     incr iter;
     if !iter > period then (
         let l = Hashtbl.fold (fun key value l -> (key, value) :: l) score [] in
         List.iter (fun (key, value) -> Hashtbl.replace score key (value / ct)) l;
-        undef := LSet.fold (fun (value, key) set -> LSet.add (Hashtbl.find score key, key) set) (!undef) LSet.empty;
-        iter := 1
+        iter := 1;
+        LSet.fold (fun (value, key) set -> LSet.add (value / ct, key) set) undef LSet.empty
     )
+    else
+        undef
 
 (* Techniques *)
 let neg l = 
@@ -100,13 +103,13 @@ let rec formula_satisfied_by f m =
     | [] -> true
     | c :: cs -> (clause_satified_by c m) && (formula_satisfied_by cs m)
 
-let success f m = 
+let success undef f m = 
     formula_satisfied_by (List.map fst f) m
 
 let infer l cl =
     { lit = l; inferred = cl }
 
-let rec unit f m = 
+let rec unit undef f m = 
     match f with
     | [] -> raise Not_possible
     | (c, _) :: cs ->
@@ -114,37 +117,35 @@ let rec unit f m =
             let l = List.find (
                 fun l' ->
                     let c' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l') c) in
-                    not (is_defined l' m) && (formula_satisfied_by c' m)
+                    (LSet.mem (Hashtbl.find score l'.vars, l'.vars) undef) && (formula_satisfied_by c' m)
             ) c in 
-            undef := LSet.remove (Hashtbl.find score l.vars, l.vars) (!undef);
-            (infer l (Some c)) :: m
+            LSet.remove (Hashtbl.find score l.vars, l.vars) undef, (infer l (Some c)) :: m
         with 
-        | Not_found -> unit cs m
+        | Not_found -> unit undef cs m
 
-let rec decide f m =
+let rec decide undef f m =
     try
-        let (s, vars) = LSet.max_elt (!undef) in
-        undef := LSet.remove (s, vars) (!undef);
-        (infer { vars = vars; equal = true } None) :: m;
+        let (s, vars) = LSet.max_elt undef in
+        LSet.remove (s, vars) undef, (infer { vars = vars; equal = true } None) :: m;
     with
     | Not_found -> raise Not_possible
 
-let rec conflict f m =
+let rec conflict undef f m =
     match f with
     | [] -> raise Not_possible
     | (c, _) :: cs -> 
         let c' = List.map (fun x -> [neg x]) c in
         if formula_satisfied_by c' m then
-            c
+            undef, c
         else
-            conflict cs m
+            conflict undef cs m
 
-let fail f m r = 
+let fail undef f m r = 
     match r with
     | [] -> true
     | _ -> false
 
-let rec resolve f m r =
+let rec resolve undef f m r =
     match r with
     | [] -> raise Not_possible
     | l :: ls -> 
@@ -155,18 +156,19 @@ let rec resolve f m r =
                 match x.inferred with
                 | None -> find a'
                 | Some cl -> 
-                    heuristic_incr x.lit.vars;
-                    List.filter (fun lit -> lit.vars <> l.vars) cl
+                    heuristic_incr undef x.lit.vars, List.filter (fun lit -> lit.vars <> l.vars) cl
             )
             | [] -> raise Not_found 
         ) in
         try
-            let d = find aux in
-            ls @ d
+            let undef', d = find aux in
+            undef', ls @ d
         with
-        | Not_found -> l :: (resolve f m ls)
+        | Not_found -> 
+            let undef', ls' = resolve undef f m ls in
+            undef', l :: ls'
 
-let backjump f m r = 
+let backjump undef f m r = 
     let rec find_m2 l r' m m1 = (
         match m with
         | [] -> raise Not_found
@@ -183,16 +185,14 @@ let backjump f m r =
             let r' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l) r) in
             try
                 let m1, m2 = find_m2 l r' m [] in
-                undef := List.fold_right (fun x set -> LSet.add (Hashtbl.find score x.lit.vars, x.lit.vars) set) m1 (!undef);
-                undef := LSet.remove (Hashtbl.find score l.vars, l.vars) (!undef);
-                (infer l (Some r)) :: m2
+                let new_undef = List.fold_left (fun set x -> LSet.add (Hashtbl.find score x.lit.vars, x.lit.vars) set) undef m1 in
+                LSet.remove (Hashtbl.find score l.vars, l.vars) new_undef, (infer l (Some r)) :: m2
             with
             | Not_found -> backjump_literal_processing ls
     ) in
     try
-        let ans = backjump_literal_processing r in
-        heuristic_incr_list (List.map (fun x -> x.vars) r);
-        ans
+        let undef', m' = backjump_literal_processing r in
+        heuristic_incr_list undef' (List.map (fun x -> x.vars) r), m'
     with
     | Not_found -> raise Not_possible
 
@@ -202,60 +202,67 @@ let rec learn f m r =
     else
         (r, true) :: f
 
-let rec forget f m =
+let rec forget undef f m =
     match f with
     | [] -> raise Not_possible
     | c :: cs -> 
         if snd c then
-            cs
+            undef, cs
         else
-            c :: (forget cs m)
+            let undef', cs' = forget undef cs m in
+            undef', c :: cs'
 
-let restart f m = 
-    undef := Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty;
-    []
+let restart undef f m = 
+    Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty, []
 
 (* Solve *)
-let rec resolution f m r =
+let rec resolution undef f m r =
     try
         (* Debugging *)
         (*print_endline "Resolution";
         print_m m;
         print_r r; *)
-        next_iteration ();
-        if fail f m r then
+        let undef = next_iteration undef in
+        if fail undef f m r then
             raise UNSAT;
         try
-            let m' = backjump f m r in
-            search (learn f m r) m'
+            let undef', m' = backjump undef f m r in
+            search undef' (learn f m r) m'
         with Not_possible ->
         try
-            resolution f m (List.sort_uniq lit_compare (resolve f m r))
+            let undef', r' = resolve undef f m r in
+            resolution undef' f m (List.sort_uniq lit_compare r')
         with Not_possible -> raise UNSAT (* ? *)
     with
     | UNSAT -> false
 
-and search f m =
+and search undef f m =
     try
         (* Debugging *)
         (* print_endline "Search";
         print_m m; *)
-        next_iteration ();
-        if success f m then
+        let undef = next_iteration undef in 
+        if success undef f m then
             raise SAT;
         try
-            search f (unit f m)
+            let undef', m' = unit undef f m in
+            search undef' f m'
         with Not_possible ->
         try
-            search f (decide f m)
+            let undef', m' = decide undef f m in
+            search undef' f m'
         with Not_possible ->
         try
-            resolution f m (conflict f m)
+            let undef', r = conflict undef f m in 
+            resolution undef' f m r
         with Not_possible -> 
         try
-            search (forget f m) m
-        with Not_possible -> search f (restart f m)
+            let undef', f' = forget undef f m in
+            search undef' f' m
+        with Not_possible -> 
+            let undef', m' = restart undef f m in
+            search undef' f m'
     with
     | SAT -> true
 
-let solve f = heuristic_init f; search (List.map (fun x -> (x, false)) f) []
+let solve f =  search (heuristic_init f) (List.map (fun x -> (x, false)) f) []
