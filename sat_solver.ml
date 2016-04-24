@@ -45,6 +45,7 @@ module LSet = Set.Make(Literal)
 let score = Hashtbl.create 1000
 
 let heuristic_init f =
+    Hashtbl.clear score;
     List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f;
     Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty
 
@@ -62,20 +63,17 @@ let heuristic_incr_list undef l =
 let heuristic_get_value key =
     Hashtbl.find score key
 
-let iter = ref 0
 let period = 10000
 let ct = 16
 
-let next_iteration undef =
-    incr iter;
-    if !iter > period then (
+let next_iteration iter undef =
+    if iter > period then (
         let l = Hashtbl.fold (fun key value l -> (key, value) :: l) score [] in
         List.iter (fun (key, value) -> Hashtbl.replace score key (value / ct)) l;
-        iter := 1;
-        LSet.fold (fun (value, key) set -> LSet.add (value / ct, key) set) undef LSet.empty
+        1, LSet.fold (fun (value, key) set -> LSet.add (value / ct, key) set) undef LSet.empty
     )
     else
-        undef
+        (iter + 1), undef
 
 (* Techniques *)
 let neg l = 
@@ -217,61 +215,80 @@ let restart undef f m =
     Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty, []
 
 (* Solve *)
-let rval = ref 10000
-
-let rec resolution undef f m r =
+let rec resolution rval iter undef f m r =
     try
         (* Debugging *)
         (*print_endline "Resolution";
         print_m m;
         print_r r; *)
-        let undef = next_iteration undef in
+        let iter', undef = next_iteration iter undef in
         if fail undef f m r then
             raise UNSAT;
         try
             let undef', m' = backjump undef f m r in
-            search undef' (learn f m r) m'
+            search rval iter' undef' (learn f m r) m'
         with Not_possible ->
         try
             let undef', r' = resolve undef f m r in
-            resolution undef' f m (List.sort_uniq lit_compare r')
+            resolution rval iter' undef' f m (List.sort_uniq lit_compare r')
         with Not_possible -> raise Unexpected_behaviour
     with
-    | UNSAT -> false
+    | UNSAT -> exit 0
 
-and search undef f m =
+and search rval iter undef f m =
     try
         (* Debugging *)
         (* print_endline "Search";
         print_m m; *)
-        let undef = next_iteration undef in 
+        let iter', undef = next_iteration iter undef in 
         if success undef f m then
             raise SAT;
-        if Random.int (!rval) = 42 then (
+        if Random.int rval = 42 then (
             let undef', m' = restart undef f m in 
-            rval := !rval + !rval / 2;
-            search undef' f m'
+            search (rval + rval / 2) iter' undef' f m'
         ) else (
             try
                 let undef', m' = unit undef f m in
-                search undef' f m'
+                search rval iter' undef' f m'
             with Not_possible ->
             try
                 let undef', m' = decide undef f m in
-                search undef' f m'
+                search rval iter' undef' f m'
             with Not_possible ->
             try
                 let undef', r = conflict undef f m in 
-                resolution undef' f m r
+                resolution rval iter' undef' f m r
             with Not_possible -> 
             try
                 let undef', f' = forget undef f m in
-                search undef' f' m
+                search rval iter' undef' f' m
             with Not_possible -> raise Unexpected_behaviour
         )
     with
-    | SAT -> true
+    | SAT -> exit 1
 
-let solve f =  
+let solve_th undef f =  
     Random.self_init ();
-    search (heuristic_init f) (List.map (fun x -> (x, false)) f) []
+    search 10000 0 undef f []
+
+let solve f =
+    let new_f = List.map (fun x -> (x, false)) f in
+    let undef = heuristic_init f in
+    let n = 8 in
+    let ids = Array.make n 0 in
+    for i = 0 to n - 1 do
+        ids.(i) <- Unix.fork ();
+        if ids.(i) = 0 then (
+            solve_th undef new_f;
+            exit 2
+        ) else
+            ignore (Unix.select [] [] [] 0.1); (* Trick to sleep less than a second *)
+    done;
+    let idc, ps = Unix.wait () in 
+    Array.iter (fun id -> if id <> idc then Unix.kill id 9) ids;
+    for i = 0 to n - 2 do
+        let _, _ = Unix.wait () in ()
+    done;
+    match ps with
+    | Unix.WEXITED x -> if x = 0 then false else if x = 1 then true else raise Unexpected_behaviour
+    | _ -> raise Unexpected_behaviour

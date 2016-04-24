@@ -29,12 +29,12 @@ let rec test str answer i fin out =
     else
         let f = read_SAT (str ^ (string_of_int i) ^ ".cnf") in
         printf "Test %d: " i; flush stdout;
-        let tinit = Sys.time () in
+        let tinit = Unix.gettimeofday () in
         if solve f = answer then begin
-            printf "OK in %f sec\n" (Sys.time () -. tinit); flush stdout;
+            printf "OK in %f sec\n" (Unix.gettimeofday () -. tinit); flush stdout;
             test str answer (i+1) fin (out+1)
         end else begin
-            printf "FAIL in %f sec\n" (Sys.time () -. tinit); flush stdout;
+            printf "FAIL in %f sec\n" (Unix.gettimeofday () -. tinit); flush stdout;
             test str answer (i+1) fin out
         end
 
