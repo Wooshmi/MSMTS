@@ -1,5 +1,5 @@
-CMO=lexer.cmo parser.cmo checker.cmo unionfind.cmo sat_solver.cmo main.cmo
-GENERATED=lexer.ml parser.ml parser.mli 
+CMO=lexer.cmo parser.cmo checker.cmo unionfind.cmo equality_theory.cmo sat_solver.cmo main.cmo
+GENERATED=lexer.ml parser.ml parser.mli
 BIN=msmts
 FLAGS=-annot -g unix.cma
 

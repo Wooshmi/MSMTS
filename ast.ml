@@ -4,6 +4,10 @@ type literal = {
 
 type clause = literal list
 
+type iliteral = {
+    lit : literal;
+    inferred : clause option }
+
 type expr = clause list
 
-type formula = int * int * expr
+type formula = int * int * expr (* nb vars, ...*)
