@@ -1,10 +1,7 @@
-CMO=lexer.cmo parser.cmo checker.cmo unionfind.cmo equality_theory.cmo sat_solver.cmo main.cmo
+CMO=unionfind.cmo ast.cmo lexer.cmo parser.cmo checker.cmo equality_theory.cmo sat_solver.cmo main.cmo
 GENERATED=lexer.ml parser.ml parser.mli
 BIN=msmts
 FLAGS=-annot -g unix.cma
-
-all: $(BIN)
-	./$(BIN) test.cnfuf
 
 $(BIN): $(CMO)
 	ocamlc $(FLAGS) -o $(BIN) $(CMO)

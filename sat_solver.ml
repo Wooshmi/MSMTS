@@ -1,6 +1,6 @@
 open Ast
 open Format
-open Equality_theory
+open Equality_theory 
 
 exception SAT
 exception UNSAT
@@ -14,15 +14,13 @@ let print_literal l =
     else
         printf "(%d <> %d)" (fst l.vars) (snd l.vars)
 
-let print_m m =
-    print_endline "M:";
+let print_model m =
     List.iter (fun il -> print_literal il.lit) m;
-    print_endline ""
+    print_newline ()
 
-let print_r r =
-    print_endline "R:";
+let print_jumpclause r =
     List.iter print_literal r;
-    print_endline ""
+    print_newline ()
 
 (* Compare function *)
 let lit_compare l1 l2 =
@@ -31,26 +29,26 @@ let lit_compare l1 l2 =
     | c -> c
 
 (* VSIDS heuristic *)
-module Literal =
+module ILiteral =
     struct
         type t = int * (int * int)
         let compare = Pervasives.compare
     end
 
-module LSet = Set.Make(Literal)
+module ILSet = Set.Make(ILiteral)
 
 let score = Hashtbl.create 1000
 
 let heuristic_init f =
     Hashtbl.clear score;
     List.iter (fun c -> List.iter (fun l -> Hashtbl.replace score l.vars 0) c) f;
-    Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty
+    Hashtbl.fold (fun key value set -> ILSet.add (value, key) set) score ILSet.empty
 
 let heuristic_incr undef key =
     let v = Hashtbl.find score key in
     Hashtbl.replace score key (v + 1);
-    if LSet.mem (v, key) undef then
-        LSet.add (v + 1, key) (LSet.remove (v, key) undef)
+    if ILSet.mem (v, key) undef then
+        ILSet.add (v + 1, key) (ILSet.remove (v, key) undef)
     else
         undef
 
@@ -67,62 +65,84 @@ let next_iteration iter undef =
     if iter > period then (
         let l = Hashtbl.fold (fun key value l -> (key, value) :: l) score [] in
         List.iter (fun (key, value) -> Hashtbl.replace score key (value / ct)) l;
-        1, LSet.fold (fun (value, key) set -> LSet.add (value / ct, key) set) undef LSet.empty
+        1, ILSet.fold (fun (value, key) set -> ILSet.add (value / ct, key) set) undef ILSet.empty
     )
     else
         (iter + 1), undef
 
 (* Techniques *)
+module Literal = 
+    struct
+        type t = int * int
+        let compare = Pervasives.compare
+    end
+
+module LMap = Map.Make(Literal)
+
 let neg l =
     { l with equal = not l.equal }
 
 let is_defined l m = List.exists (fun l' -> l'.lit.vars = l.vars) m
 
 let get_value l m =
-    let l' = List.find (fun l' -> l'.lit.vars = l.vars) m in
-    if l'.lit.equal = l.equal then
+    let v = LMap.find l.vars m in
+    if v = l.equal then
         true
     else
         false
 
-let rec clause_satified_by c m =
+let rec clause_satisfied_by' c m =
     match c with
     | [] -> false
     | l :: ls ->
         try
-            (get_value l m) || (clause_satified_by ls m)
+            (get_value l m) || (clause_satisfied_by' ls m)
         with
-        | Not_found -> false
+        | Not_found -> (clause_satisfied_by' ls m)
 
-let rec formula_satisfied_by f m =
+
+let formula_satisfied_by f m =
+    let model = List.fold_left (fun m il -> LMap.add il.lit.vars il.lit.equal m) LMap.empty m in
+    let rec aux f = begin
+        match f with
+        | [] -> true
+        | c :: cs -> (clause_satisfied_by' c model) && (aux cs)
+    end in aux f
+
+let rec formula_satisfied_by' f m =
     match f with
     | [] -> true
-    | c :: cs -> (clause_satified_by c m) && (formula_satisfied_by cs m)
+    | c :: cs -> (clause_satisfied_by' c m) && (formula_satisfied_by' cs m)
 
 let success undef f m =
-    formula_satisfied_by (List.map fst f) m
+    let model = List.fold_left (fun m il -> LMap.add il.lit.vars il.lit.equal m) LMap.empty m in
+    formula_satisfied_by' (List.map fst f) model
 
-let infer l cl =
-    { lit = l; inferred = cl }
+let extend l cl uf =
+    { lit = l; inferred = cl; olduf = uf }
 
-let rec unit undef f m =
+let rec unit undef f m uf =
     match f with
     | [] -> raise Not_possible
     | (c, _) :: cs ->
         try
             let l = List.find (
-                fun l' ->
-                    let c' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l') c) in
-                    (LSet.mem (Hashtbl.find score l'.vars, l'.vars) undef) && (formula_satisfied_by c' m)
+                fun l ->
+                    let c' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l) c) in
+                    (ILSet.mem (Hashtbl.find score l.vars, l.vars) undef) && (formula_satisfied_by c' m) && (is_possible_mod_theory uf l)
             ) c in
-            LSet.remove (Hashtbl.find score l.vars, l.vars) undef, (infer l (Some c)) :: m
+            ILSet.remove (Hashtbl.find score l.vars, l.vars) undef, (extend l (Some c) uf) :: m, update_unionfind uf l
         with
-        | Not_found -> unit undef cs m
+        | Not_found -> unit undef cs m uf
 
-let rec decide undef f m =
+let rec decide undef f m uf =
     try
-        let (s, vars) = LSet.max_elt undef in
-        LSet.remove (s, vars) undef, (infer { vars = vars; equal = Random.bool () } None) :: m;
+        let (s, vars) = ILSet.max_elt undef in
+        let l = { vars = vars; equal = Random.bool () } in
+        if is_possible_mod_theory uf l then
+            ILSet.remove (s, vars) undef, (extend l None uf) :: m, update_unionfind uf l
+        else
+            ILSet.remove (s, vars) undef, (extend (neg l) None uf) :: m, update_unionfind uf (neg l) 
     with
     | Not_found -> raise Not_possible
 
@@ -170,7 +190,7 @@ let backjump undef f m r =
         | [] -> raise Not_found
         | il :: ils ->
             if (il.inferred = None) && not (is_defined l ils) && formula_satisfied_by r' ils then
-                il :: m1, ils
+                il.olduf, il :: m1, ils
             else
                 find_m2 l r' ils (il :: m1)
     ) in
@@ -180,15 +200,15 @@ let backjump undef f m r =
         | l :: ls ->
             let r' = List.map (fun x -> [neg x]) (List.filter (fun x -> x <> l) r) in
             try
-                let m1, m2 = find_m2 l r' m [] in
-                let new_undef = List.fold_left (fun set x -> LSet.add (Hashtbl.find score x.lit.vars, x.lit.vars) set) undef m1 in
-                LSet.remove (Hashtbl.find score l.vars, l.vars) new_undef, (infer l (Some r)) :: m2
+                let uf, m1, m2 = find_m2 l r' m [] in
+                let new_undef = List.fold_left (fun set x -> ILSet.add (Hashtbl.find score x.lit.vars, x.lit.vars) set) undef m1 in
+                ILSet.remove (Hashtbl.find score l.vars, l.vars) new_undef, (extend l (Some r) uf) :: m2, update_unionfind uf l
             with
             | Not_found -> backjump_literal_processing ls
     ) in
     try
-        let undef', m' = backjump_literal_processing r in
-        heuristic_incr_list undef' (List.map (fun x -> x.vars) r), m'
+        let undef', m', uf = backjump_literal_processing r in
+        heuristic_incr_list undef' (List.map (fun x -> x.vars) r), m', uf
     with
     | Not_found -> raise Not_possible
 
@@ -208,70 +228,63 @@ let rec forget undef f m =
             let undef', cs' = forget undef cs m in
             undef', c :: cs'
 
-let restart undef f m =
-    Hashtbl.fold (fun key value set -> LSet.add (value, key) set) score LSet.empty, []
-
-let print_model m = List.iter (
-    fun l ->
-    if l.lit.equal then
-        (Printf.printf " %d = %d \n" (fst l.lit.vars) (snd l.lit.vars))
-    else
-        (Printf.printf " %d != %d \n" (fst l.lit.vars) (snd l.lit.vars)) ) m
+let restart n =
+    Hashtbl.fold (fun key value set -> ILSet.add (value, key) set) score ILSet.empty, [], PUF.create n
 
 (* Solve *)
-let rec resolution rval iter undef n f m r =
+let rec resolution rval iter undef n f m uf r =
     try
         (* Debugging *)
         (*print_endline "Resolution";
-        print_m m;
-        print_r r; *)
+        print_model m;
+        print_jumpclause r; *)
         let iter', undef = next_iteration iter undef in
         if fail undef f m r then
             raise UNSAT;
         try
-            let undef', m' = backjump undef f m r in
-            search rval iter' undef' n (learn f m r) m'
+            let undef', m', uf' = backjump undef f m r in
+            search rval iter' undef' n (learn f m r) m' uf'
         with Not_possible ->
         try
             let undef', r' = resolve undef f m r in
-            resolution rval iter' undef' n f m (List.sort_uniq lit_compare r')
-        with Not_possible -> (
-            let undef', m' = restart undef f m in
-            search rval iter' undef' n f m'
-        )
+            resolution rval iter' undef' n f m uf (List.sort_uniq lit_compare r')
+        with Not_possible -> begin
+            let undef', m', uf' = restart n in
+            search rval iter' undef' n f m' uf'
+        end
     with
     | UNSAT -> (print_endline ":("; exit 0)
 
-and search rval iter undef n f m =
+and search rval iter undef n f m uf =
     try
         (* Debugging *)
         (* print_endline "Search";
-        print_m m; *)
+        print_model m; *)
         let iter', undef = next_iteration iter undef in
         if success undef f m then (
-            match verify m n with
+            match verify m uf with
             | [] -> raise SAT
-            | ls -> let f' = (ls, false) :: f in resolution rval iter undef n f' m ls
+            | ls -> let f' = f @ [(ls, false)]  in resolution rval iter undef n f' m uf ls
         ) else (
             if Random.int rval = 42 then (
-                let undef', m' = restart undef f m in
-                search (rval + rval / 2) iter' undef' n f m'
+                let undef', m', uf' = restart n in
+                search (rval + rval / 2) iter' undef' n f m' uf'
             ) else (
                 try
-                    let undef', m' = unit undef f m in
-                    search rval iter' undef' n f m'
+                    let undef', m', uf' = unit undef f m uf in
+                    search rval iter' undef' n f m' uf'
                 with Not_possible ->
                 try
-                    let undef', m' = decide undef f m in
-                    search rval iter' undef' n f m'
+                    let undef', m', uf' = decide undef f m uf in
+                    search rval iter' undef' n f m' uf'
                 with Not_possible ->
                 try
                     let undef', r = conflict undef f m in
-                    resolution rval iter' undef' n f m r
+                    resolution rval iter' undef' n f m uf r
                 with Not_possible ->
                 try
                     let undef', f' = forget undef f m in
-                    search rval iter' undef' n f' m
+                    search rval iter' undef' n f' m uf
                 with Not_possible -> assert false
             )
         )
@@ -280,7 +293,7 @@ and search rval iter undef n f m =
 
 let solve_th undef n f =
     Random.self_init ();
-    search 10000 0 undef n f []
+    search 10000 0 undef n f [] (PUF.create n)
 
 let solve (n, _, f) =
     let new_f = List.map (fun x -> (x, false)) f in
