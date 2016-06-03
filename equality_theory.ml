@@ -1,35 +1,56 @@
-open Ast
+open Types
 
-exception ET_exception of (int * int)
+let new_theory n =
+    { eq = PUF.create n; neq = PArr.init n (fun _ -> ISet.empty) }
 
-let update_unionfind uf l =
-    if l.equal then
-        PUF.union uf (fst l.vars - 1) (snd l.vars - 1)
-    else
-        uf
+let update_theory th l =
+    if l.equal then ( (* x = y *)
+        let x, y = fst l.vars - 1, snd l.vars - 1 in
+        let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
+        let neweq = PUF.union th.eq rx ry in
+        let newrx = PUF.find neweq x in
+        let folder oldvar newvar var neq = (
+            let neqvar = PArr.get neq var in
+            let newneqvar = ISet.add newvar (ISet.remove oldvar neqvar) in
+            PArr.set neq var newneqvar
+        ) in
+        if newrx = rx then ( (* rx is the new root *)
+            let neqrx, neqry = PArr.get th.neq rx, PArr.get th.neq ry in
+            let newneqrx, newneqry = ISet.union neqrx neqry, ISet.empty in
+            let newneq' = ISet.fold (folder ry rx) neqry th.neq in
+            let newneq = PArr.set (PArr.set newneq' rx newneqrx) ry newneqry in
+            { eq = neweq; neq = newneq }
+        ) else ( (* ry is the new root *)
+            let neqrx, neqry = PArr.get th.neq rx, PArr.get th.neq ry in
+            let newneqrx, newneqry = ISet.empty, ISet.union neqrx neqry in
+            let newneq' = ISet.fold (folder ry rx) neqry th.neq in
+            let newneq = PArr.set (PArr.set newneq' rx newneqrx) ry newneqry in
+            { eq = neweq; neq = newneq }
+        )
+    ) else ( (* x <> y *)
+        let x, y = fst l.vars - 1, snd l.vars - 1 in
+        let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
+        let neqrx, neqry = PArr.get th.neq rx, PArr.get th.neq ry in
+        let newneqrx, newneqry = ISet.add ry neqrx, ISet.add rx neqry in
+        let newneq = PArr.set (PArr.set th.neq rx newneqrx) ry newneqry in
+        { eq = th.eq; neq = newneq }
+    )
 
-let is_possible_mod_theory uf l =
-    if l.equal then
-        true
-    else
-        let rx, ry = PUF.find uf (fst l.vars - 1), PUF.find uf (snd l.vars - 1) in rx != ry
+let is_possible_modulo_theory th l =
+    if l.equal then ( 
+        let x, y = fst l.vars - 1, snd l.vars - 1 in
+        let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
+        not (ISet.mem ry (PArr.get th.neq rx))
+    ) else (
+        let x, y = fst l.vars - 1, snd l.vars - 1 in
+        let rx, ry = PUF.find th.eq x, PUF.find th.eq y in 
+        rx != ry
+    )
 
-let verify m uf =
-    try
-        List.iter (fun l ->
-            if not (l.lit.equal) then (
-                let rx, ry = PUF.find uf (fst l.lit.vars - 1), PUF.find uf (snd l.lit.vars - 1) in
-                if rx = ry then raise (ET_exception l.lit.vars);
-            ) else ()) m;
-        []
-    with ET_exception vars ->
-        let rx, ry = PUF.find uf (fst vars - 1), PUF.find uf (snd vars - 1) in
-        List.fold_left (fun ls l ->
-            if l.lit.equal then (
-                let rx', ry' = PUF.find uf (fst l.lit.vars - 1), PUF.find uf (snd l.lit.vars - 1) in
-                if rx' = rx || ry' = ry  || rx' = ry || ry' = rx then
-                    { l.lit with equal = false } :: ls
-                else
-                    ls
-            ) else
-                ls)  [{ vars = vars; equal = true }] m
+let try_deduce_eq th x y =
+    let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
+    rx = ry
+
+let try_deduce_neq th x y =
+    let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
+    ISet.mem ry (PArr.get th.neq rx)

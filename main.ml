@@ -30,7 +30,7 @@ let () =
         let f = Parser.formula Lexer.token lb in
         close_in c;
         Checker.check f;
-        Sat_solver.solve f
+        Solver.solve f
     with
     | Lexer.Lexing_error s ->
         report (lexeme_start_p lb, lexeme_end_p lb);

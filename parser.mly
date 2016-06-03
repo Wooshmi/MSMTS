@@ -1,5 +1,5 @@
 %{
-    open Ast
+    open Types
     open Lexing
 %}
 %token Newline Tequal Tnotequal Eof
@@ -7,7 +7,7 @@
 %token <int * int> Intro
 
 %start formula
-%type <Ast.formula> formula
+%type <Types.formula> formula
 
 %%
 formula:

@@ -1,4 +1,4 @@
-CMO=unionfind.cmo ast.cmo lexer.cmo parser.cmo checker.cmo equality_theory.cmo sat_solver.cmo main.cmo
+CMO=persistent_array.cmo persistent_unionfind.cmo types.cmo lexer.cmo parser.cmo checker.cmo equality_theory.cmo solver.cmo main.cmo
 GENERATED=lexer.ml parser.ml parser.mli
 BIN=msmts
 FLAGS=-annot -g unix.cma
