@@ -28,7 +28,7 @@ type clause = literal list
 
 type expr = clause list
 
-type formula = int * int * expr (* nb vars, ...*)
+type formula = int * int * expr (* (number of variables, number of clauses, expression) *)
 
 (* Types used in the solver *)
 type iliteral = {

@@ -38,11 +38,12 @@ module Make(A : PersistentArray) : PersistentUnionFind = struct
         if cx <> cy then
             let rx = A.get h.rank cx in
             let ry = A.get h.rank cy in
-            if rx >= ry then { 
-                rank = A.set h.rank cx (rx + ry);
-                parent = A.set h.parent cy cx }
-            else {
-                rank = A.set h.rank cy (rx + ry);
+            if rx > ry then 
+                { h with parent = A.set h.parent cy cx }
+            else if ry > rx then
+                { h with parent = A.set h.parent cx cy }
+            else 
+                { rank = A.set h.rank cy (rx + 1);
                 parent = A.set h.parent cx cy }
         else
             h

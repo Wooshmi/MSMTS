@@ -131,23 +131,22 @@ let success undef f m =
 
 (*  The T-PROPAGATE technique. *)
 let rec t_propagate undef m th = 
-    let lundef = ILSet.fold (fun x l -> x :: l) undef [] in
-    let rec aux l = (
-        match l with
-        | [] -> raise Not_possible
-        | il :: ls -> 
-            let hval, vars = il in 
-            let x, y = fst vars - 1, snd vars - 1 in
-            if try_deduce_eq th x y then (
-                let lit = { vars = vars; equal = true } in
-                ILSet.remove il undef, (extend lit None th) :: m, update_theory th lit
-            ) else if try_deduce_neq th x y then (
-                let lit = { vars = vars; equal = true } in
-                ILSet.remove il undef, (extend lit None th) :: m, update_theory th lit
-            ) else
-                aux ls
-
-    ) in aux lundef
+    try
+        let il = ILSet.max_elt undef in
+        let hval, vars = il in 
+        let x, y = fst vars - 1, snd vars - 1 in
+        if try_deduce_eq th x y then (
+            let lit = { vars = vars; equal = true } in
+            ILSet.remove il undef, (extend lit None th) :: m, update_theory th lit
+        ) else if try_deduce_neq th x y then (
+            let lit = { vars = vars; equal = false } in
+            ILSet.remove il undef, (extend lit None th) :: m, update_theory th lit
+        ) else (
+            let undef', m', th' = t_propagate (ILSet.remove il undef) m th in
+            ILSet.add il undef', m', th'
+        )
+    with
+    | Not_found -> raise Not_possible
 
 (*  The UNIT technique. *)
 let rec unit undef f m th =
@@ -167,14 +166,17 @@ let rec unit undef f m th =
 (*  The DECIDE technique. *)
 let rec decide undef f m th =
     try
-        let (s, vars) = ILSet.max_elt undef in
+        let il = ILSet.max_elt undef in
+        let (s, vars) = il in
         let l = { vars = vars; equal = Random.bool () } in
         if is_possible_modulo_theory th l then
             ILSet.remove (s, vars) undef, (extend l None th) :: m, update_theory th l
         else if is_possible_modulo_theory th (neg l) then
             ILSet.remove (s, vars) undef, (extend (neg l) None th) :: m, update_theory th (neg l) 
-        else
-            raise Not_possible
+        else (
+            let undef', m', th' = decide (ILSet.remove il undef) f m th in
+            ILSet.add il undef', m', th'
+        )
     with
     | Not_found -> raise Not_possible
 

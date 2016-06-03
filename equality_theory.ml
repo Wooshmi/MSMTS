@@ -1,8 +1,11 @@
 open Types
+open Format
 
+(*  A new empty equality theory. *)
 let new_theory n =
     { eq = PUF.create n; neq = PArr.init n (fun _ -> ISet.empty) }
 
+(*  Updates the theory with the hypothesis l. *)
 let update_theory th l =
     if l.equal then ( (* x = y *)
         let x, y = fst l.vars - 1, snd l.vars - 1 in
@@ -23,7 +26,7 @@ let update_theory th l =
         ) else ( (* ry is the new root *)
             let neqrx, neqry = PArr.get th.neq rx, PArr.get th.neq ry in
             let newneqrx, newneqry = ISet.empty, ISet.union neqrx neqry in
-            let newneq' = ISet.fold (folder ry rx) neqry th.neq in
+            let newneq' = ISet.fold (folder rx ry) neqry th.neq in
             let newneq = PArr.set (PArr.set newneq' rx newneqrx) ry newneqry in
             { eq = neweq; neq = newneq }
         )
@@ -36,8 +39,9 @@ let update_theory th l =
         { eq = th.eq; neq = newneq }
     )
 
+(*  Tests if a literal can be added to the model without contradicting the theory. *)
 let is_possible_modulo_theory th l =
-    if l.equal then ( 
+    if l.equal then (
         let x, y = fst l.vars - 1, snd l.vars - 1 in
         let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
         not (ISet.mem ry (PArr.get th.neq rx))
@@ -47,10 +51,12 @@ let is_possible_modulo_theory th l =
         rx != ry
     )
 
+(*  Tests if it is possible to deduce x = y. *)
 let try_deduce_eq th x y =
     let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
     rx = ry
 
+(*  Tests if it is possible to deduce x <> y. *)
 let try_deduce_neq th x y =
     let rx, ry = PUF.find th.eq x, PUF.find th.eq y in
     ISet.mem ry (PArr.get th.neq rx)
